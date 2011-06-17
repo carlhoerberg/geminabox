@@ -3,6 +3,7 @@ require 'sinatra/base'
 require 'rubygems'
 require 'rubygems/builder'
 require "rubygems/indexer"
+require 'fog'
 
 require 'hostess'
 
@@ -13,7 +14,11 @@ class Geminabox < Sinatra::Base
   set :public, File.join(File.dirname(__FILE__), *%w[.. public])
   set :data, File.join(File.dirname(__FILE__), *%w[.. data])
   set :views, File.join(File.dirname(__FILE__), *%w[.. views])
+	set :storage, {:provider => 'Local', :local_root => './data' }
   set :allow_replace, false
+
+	storage = Fog::Storage.new(settings.storage)
+
   use Hostess
 
   class << self
@@ -46,7 +51,6 @@ class Geminabox < Sinatra::Base
   end
 
   post '/upload' do
-    return "Please ensure #{File.expand_path(Geminabox.data)} is writable by the geminabox web server." unless File.writable? Geminabox.data
     unless params[:file] && (tmpfile = params[:file][:tempfile]) && (name = params[:file][:filename])
       @error = "No file selected"
       return erb(:upload)
@@ -54,27 +58,8 @@ class Geminabox < Sinatra::Base
 
     tmpfile.binmode
 
-    Dir.mkdir(File.join(options.data, "gems")) unless File.directory? File.join(options.data, "gems")
-
-    dest_filename = File.join(options.data, "gems", File.basename(name))
-
-
-    if Geminabox.disallow_replace? and File.exist?(dest_filename)
-      existing_file_digest = Digest::SHA1.file(dest_filename).hexdigest
-      tmpfile_digest = Digest::SHA1.file(tmpfile.path).hexdigest
-
-      if existing_file_digest != tmpfile_digest
-        return error_response(409, "Gem already exists, you must delete the existing version first.")
-      else
-        return [200, "Ignoring upload, you uploaded the same thing previously."]
-      end
-    end
-
-    File.open(dest_filename, "wb") do |f|
-      while blk = tmpfile.read(65536)
-        f << blk
-      end
-    end
+		gems_dir = storage.directories.create(:key => 'gems')
+		gems_dir.files.create(:key => File.basename(name), :body => tmpfile.open)
     reindex
     redirect "/"
   end
